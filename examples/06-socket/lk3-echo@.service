@@ -1,0 +1,9 @@
+[Unit]
+Description=LK3 echo connection
+
+[Service]
+ExecStart=/usr/bin/cat
+StandardInput=socket
+StandardOutput=inherit
+DynamicUser=yes
+NoNewPrivileges=yes

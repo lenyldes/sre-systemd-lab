@@ -1,0 +1,1 @@
+UUID=1234-5678 /mnt/lk3-missing ext4 defaults 0 2

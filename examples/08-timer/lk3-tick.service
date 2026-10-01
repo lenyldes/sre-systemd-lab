@@ -1,0 +1,7 @@
+[Unit]
+Description=LK3 print current time
+
+[Service]
+Type=oneshot
+User=course-web
+ExecStart=/usr/bin/date --iso-8601=seconds

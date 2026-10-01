@@ -1,0 +1,11 @@
+[Unit]
+Description=Course web server
+
+[Service]
+Type=exec
+User=course-web
+WorkingDirectory=/srv/lk3
+ExecStart=/usr/bin/python3 -u -m http.server 8080 --bind 127.0.0.1
+
+[Install]
+WantedBy=multi-user.target
