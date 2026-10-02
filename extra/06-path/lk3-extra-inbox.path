@@ -1,0 +1,8 @@
+[Unit]
+Description=LK3 extra watch for a request file
+
+[Path]
+PathExists=/var/lib/lk3-extra-inbox/request.txt
+
+[Install]
+WantedBy=multi-user.target

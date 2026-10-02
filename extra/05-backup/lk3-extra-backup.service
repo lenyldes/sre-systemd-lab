@@ -1,0 +1,9 @@
+[Unit]
+Description=LK3 extra archive sample files
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=lk3-extra-backup
+ExecStart=/usr/bin/python3 /opt/lk3-extra/backup.py
+TimeoutStartSec=30s

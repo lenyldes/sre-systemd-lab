@@ -20,6 +20,13 @@
 - [8. Проверка копии fstab](#fstab)
 - [Завершение и повтор семинара](#finish)
 - [Дополнительно: таймер](#timer)
+- [Дополнительно: шесть мини-лабораторных с готовыми командами](#extra)
+  - [Д1. Ограничить время работы задачи](#extra-timeout)
+  - [Д2. Найти файл в приватном /tmp](#extra-private-tmp)
+  - [Д3. Изменить лимит CPU работающей службы](#extra-cpu)
+  - [Д4. Запустить два сайта из одного шаблона](#extra-template)
+  - [Д5. Сделать и восстановить резервную копию](#extra-backup)
+  - [Д6. Запустить обработчик при появлении файла](#extra-path)
 - [Типичные проблемы](#troubleshooting)
 - [Что проверено и документация](#verification)
 
@@ -240,6 +247,7 @@ sudo poweroff
 | `examples/07-fstab/` | Строка с отсутствующим UUID для проверки копии fstab |
 | `examples/08-timer/` | Необязательный пример календарного таймера |
 | `scripts/` | Подготовка файлов и проверка исходного окружения |
+| `extra/` | Готовые файлы дополнительных мини-лабораторных Д1–Д6; Д1 использует только команды |
 
 <a id="seminar"></a>
 ## 4. План занятия на 90 минут
@@ -838,7 +846,7 @@ bash scripts/check-environment.sh
 <a id="timer"></a>
 ## Дополнительно. Календарный таймер
 
-Этот пример относится к теории о timer-юнитах и **не входит в основной план 90 минут**. Его можно дать как самостоятельную работу на 5–10 минут. Пользователь `course-web` должен быть создан шагом подготовки.
+Этот пример относится к теории о timer-юнитах и **не входит в основной план 90 минут**. Его можно пройти по инструкции за 5–10 минут. Пользователь `course-web` должен быть создан шагом подготовки. Практическое применение таймера с восстановлением файлов есть в [опыте Д5](#extra-backup).
 
 ### Установить
 
@@ -892,6 +900,383 @@ sudo systemctl daemon-reload
 
 Очистка state удаляет сохранённую отметку Persistent для нового прохождения.
 
+<a id="extra"></a>
+## Дополнительно. Мини-лабораторные с готовыми командами
+
+Шесть независимых опытов для тех, кто хочет ещё поработать с systemd. Выбирайте любой, копируйте команды небольшими блоками и сравнивайте результат с пояснением. Сдавать работу или писать собственные скрипты не требуется. Эти опыты **не входят в основной план 90 минут**.
+
+### Подготовка
+
+Все команды ниже выполняются **в Ubuntu VM**, в обычном Bash-терминале. Подойдёт пользователь с `sudo` или `root`. Обновите репозиторий и установите инструменты:
+
+```bash
+cd ~/sre-systemd-lab
+git pull --ff-only
+sudo apt update
+sudo apt install -y python3 curl util-linux
+```
+
+`nsenter` для Д2 входит в `util-linux`. Нужна полноценная Ubuntu с systemd в роли PID 1 и cgroups v2, как в основном практикуме. Предварительно запускать `course-web` или проходить остальные опыты не нужно.
+
+| Опыт | Время | Что увидим |
+|---|---|---|
+| [Д1. Время работы](#extra-timeout) | 5 минут | Процесс остановлен по тайм-ауту |
+| [Д2. PrivateTmp](#extra-private-tmp) | 7–10 минут | Один путь `/tmp` показывает разное содержимое |
+| [Д3. CPUQuota](#extra-cpu) | 7–10 минут | Потребление CPU меняется без перезапуска процесса |
+| [Д4. Шаблон службы](#extra-template) | 10 минут | Два независимо работающих сайта |
+| [Д5. Резервная копия](#extra-backup) | 10–15 минут | Таймер создаёт архив, из которого возвращаем старый текст |
+| [Д6. Path activation](#extra-path) | 10–15 минут | Появление файла запускает обработчик |
+
+У опытов собственные имена `lk3-extra-*`. Команды очистки удаляют только их unit-файлы и учебные данные. В каждом опыте пройдите раздел очистки перед повтором. Если прервали опыт, вернитесь к его очистке. Опыты Д2 и Д3 автоматически ограничены 15 минутами; после этого потребуется повторный запуск. Переменные `LAB_*` действуют в текущем терминале: после переподключения выполните блок, в котором переменная присваивается.
+
+<a id="extra-timeout"></a>
+### Д1. Остановить слишком долгую задачу
+
+**Что увидим:** процесс собирается работать 60 секунд, а systemd остановит его примерно через три. Такое ограничение полезно для зависших фоновых задач.
+
+#### Запустить и посмотреть результат
+
+```bash
+sudo systemd-run --unit=lk3-extra-timeout \
+  -p RuntimeMaxSec=3s \
+  /usr/bin/sleep 60
+sleep 5
+systemctl show lk3-extra-timeout.service -p ActiveState -p Result
+```
+
+Ожидаем две строки (их порядок может отличаться):
+
+```text
+ActiveState=failed
+Result=timeout
+```
+
+```bash
+sudo journalctl -b -u lk3-extra-timeout.service --no-pager -n 15
+```
+
+В журнале найдите сообщение об истечении времени работы и остановке процесса. `failed` здесь — ожидаемый результат опыта. Если при сильной нагрузке ещё видно `active`, повторите проверку через пару секунд.
+
+**Почему так:** `systemd-run` создал временную службу, а `RuntimeMaxSec` ограничил длительность её активной работы. Это отдельный параметр от `TimeoutStartSec`, который ограничивает фазу запуска. Сам `sleep` о лимите ничего не знает.
+
+#### Очистка и повтор
+
+```bash
+sudo systemctl reset-failed lk3-extra-timeout.service
+```
+
+После сброса завершившаяся временная служба может исчезнуть из списка загруженных unit-ов — это нормально. Файл в `/etc/systemd/system` не создавался. Теперь можно повторить запуск.
+
+**Если не получилось:** сообщение о существующем unit означает, что остался предыдущий запуск. Если он ещё работает, сначала выполните `sudo systemctl stop lk3-extra-timeout.service`; если находится в `failed`, сбросьте состояние командой выше.
+
+<a id="extra-private-tmp"></a>
+### Д2. Найти файл в приватном /tmp
+
+**Что увидим:** служба создаёт `/tmp/lk3-extra-message.txt`, но обычный терминал не видит этот файл. Посмотрим на файловую систему глазами службы.
+
+#### Установить и запустить
+
+```bash
+cd ~/sre-systemd-lab
+cat extra/02-private-tmp/lk3-extra-tmp.service
+sudo install -m 0644 extra/02-private-tmp/lk3-extra-tmp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start lk3-extra-tmp.service
+systemctl show lk3-extra-tmp.service -p ActiveState -p MainPID -p PrivateTmp
+```
+
+Ожидаем `ActiveState=active`, ненулевой `MainPID` и `PrivateTmp=yes`. Подготовительная команда `ExecStartPre` записала файл, затем служба запустила `sleep`, чтобы у нас было время рассмотреть её окружение.
+
+#### Посмотреть снаружи и изнутри
+
+```bash
+ls -l /tmp/lk3-extra-message.txt
+```
+
+Ожидаем **No such file or directory** / **Нет такого файла или каталога** и ненулевой код команды. Это запланированное наблюдение. Если файл с таким именем уже существовал в общем `/tmp`, он является отдельным файлом и не относится к записи службы.
+
+```bash
+LAB_TMP_PID=$(systemctl show lk3-extra-tmp.service -p MainPID --value)
+sudo nsenter --target "$LAB_TMP_PID" --mount -- \
+  /usr/bin/cat /tmp/lk3-extra-message.txt
+```
+
+Ожидаем:
+
+```text
+hello from private tmp
+```
+
+**Почему так:** `PrivateTmp=yes` дал службе отдельные `/tmp` и `/var/tmp`. `nsenter --mount` запустил `cat` в том же пространстве монтирования, поэтому он увидел временный каталог службы. PID берём из systemd; конкретное число у каждого будет своим. `DynamicUser=yes` выделяет службе временного пользователя.
+
+#### Очистка и повтор
+
+```bash
+sudo systemctl stop lk3-extra-tmp.service
+sudo rm /etc/systemd/system/lk3-extra-tmp.service
+sudo systemctl daemon-reload
+```
+
+Приватные временные файлы удаляются при остановке службы. Общий `/tmp` вручную чистить не нужно.
+
+**Если не получилось:** при `MainPID=0` служба уже завершилась или не запустилась. Посмотрите `sudo journalctl -b -u lk3-extra-tmp.service --no-pager -n 20`, снова запустите службу и заново присвойте `LAB_TMP_PID`. Ошибка `nsenter: command not found` означает, что нужно установить `util-linux`.
+
+<a id="extra-cpu"></a>
+### Д3. Изменить лимит CPU работающей службы
+
+**Что увидим:** один вычислительный процесс сначала получает до одного CPU, затем примерно 20% и 50% CPU. Его PID при изменении лимита сохраняется.
+
+#### Запустить нагрузку и измерить
+
+```bash
+cd ~/sre-systemd-lab
+cat extra/03-cpu/busy.py
+sudo install -d -m 0755 /opt/lk3-extra
+sudo install -m 0644 extra/03-cpu/busy.py /opt/lk3-extra/busy.py
+sudo systemd-run --unit=lk3-extra-cpu \
+  -p CPUAccounting=yes \
+  -p CPUQuota=100% \
+  -p RuntimeMaxSec=15min \
+  /usr/bin/python3 /opt/lk3-extra/busy.py
+systemctl show lk3-extra-cpu.service -p MainPID -p CPUQuotaPerSecUSec
+python3 extra/03-cpu/measure-cpu.py
+```
+
+Последняя команда измеряет CPU-время всей cgroup службы за пять секунд. При свободном CPU результат обычно близок к `100% одного логического CPU`. Скрипт только читает статистику из `/sys/fs/cgroup`; его исходник лежит рядом с `busy.py`.
+
+#### Применить квоты без перезапуска
+
+```bash
+sudo systemctl set-property --runtime lk3-extra-cpu.service CPUQuota=20%
+systemctl show lk3-extra-cpu.service -p MainPID -p CPUQuotaPerSecUSec
+python3 extra/03-cpu/measure-cpu.py
+```
+
+Ожидаем прежний PID, `CPUQuotaPerSecUSec=200ms` и потребление примерно 20% одного CPU.
+
+```bash
+sudo systemctl set-property --runtime lk3-extra-cpu.service CPUQuota=50%
+systemctl show lk3-extra-cpu.service -p MainPID -p CPUQuotaPerSecUSec
+python3 extra/03-cpu/measure-cpu.py
+```
+
+Теперь ожидаем `CPUQuotaPerSecUSec=500ms` и примерно 50%. На загруженном компьютере значения могут быть ниже: квота задаёт верхний предел, а не гарантированную долю. Небольшие отклонения измерения нормальны.
+
+**Почему так:** systemd меняет ограничение CPU-времени cgroup работающей службы. `20%` — пятая часть одного логического CPU, даже если VM выделено несколько CPU. `--runtime` не сохраняет настройку после перезагрузки. В этом опыте сама служба тоже временная.
+
+#### Очистка и повтор
+
+```bash
+sudo systemctl stop lk3-extra-cpu.service
+sudo rm /opt/lk3-extra/busy.py
+```
+
+Не оставляйте вычислительный процесс работать после наблюдений. Если его уже остановил 15-минутный лимит и при повторе имя занято, выполните `sudo systemctl reset-failed lk3-extra-cpu.service`, затем повторите установку и запуск.
+
+**Если не получилось:** сообщение о пропавшей cgroup означает, что служба завершилась; проверьте её журнал. Очень низкий первый результат может означать, что CPU хоста занят другими задачами. Сравнивайте несколько измерений и фактическое значение `CPUQuotaPerSecUSec`.
+
+<a id="extra-template"></a>
+### Д4. Запустить два сайта из одного шаблона
+
+**Что увидим:** один unit-файл создаёт две службы с разными портами, страницами и журналами. Остановка одной не затрагивает вторую.
+
+#### Подготовить страницы и шаблон
+
+```bash
+cd ~/sre-systemd-lab
+sudo install -d -m 0755 /srv/lk3-extra-web/8082 /srv/lk3-extra-web/8083
+printf 'site on 8082\n' | sudo tee /srv/lk3-extra-web/8082/index.html
+printf 'site on 8083\n' | sudo tee /srv/lk3-extra-web/8083/index.html
+sudo chmod 0644 /srv/lk3-extra-web/8082/index.html /srv/lk3-extra-web/8083/index.html
+cat extra/04-template/lk3-extra-web@.service
+sudo install -m 0644 extra/04-template/lk3-extra-web@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start lk3-extra-web@8082.service lk3-extra-web@8083.service
+```
+
+В файле найдите `%i`: systemd подставит туда `8082` или `8083` из имени экземпляра. Подстановка используется и для порта, и для каталога со страницей.
+
+#### Проверить независимость экземпляров
+
+```bash
+curl --fail --retry 5 --retry-delay 1 --retry-connrefused --max-time 3 http://127.0.0.1:8082/
+curl --fail --retry 5 --retry-delay 1 --retry-connrefused --max-time 3 http://127.0.0.1:8083/
+systemctl list-units 'lk3-extra-web@*.service' --no-pager
+sudo journalctl -b -u lk3-extra-web@8082.service --no-pager -n 10
+sudo journalctl -b -u lk3-extra-web@8083.service --no-pager -n 10
+```
+
+Ответы: `site on 8082` и `site on 8083`. В списке две активные службы, у каждой свой журнал HTTP-запросов.
+
+```bash
+sudo systemctl stop lk3-extra-web@8082.service
+curl --fail --max-time 3 http://127.0.0.1:8082/
+curl --fail --max-time 3 http://127.0.0.1:8083/
+```
+
+Первый `curl` должен завершиться ошибкой соединения — это ожидается. Второй продолжает возвращать `site on 8083`. Выполняйте команды по отдельности, даже если первая вернула ошибку.
+
+#### Очистка и повтор
+
+```bash
+sudo systemctl stop lk3-extra-web@8082.service lk3-extra-web@8083.service
+sudo rm /etc/systemd/system/lk3-extra-web@.service
+sudo systemctl daemon-reload
+sudo rm -r /srv/lk3-extra-web
+```
+
+**Если не получилось:** при `Address already in use` проверьте владельца порта через `sudo ss -ltnp '( sport = :8082 or sport = :8083 )'`. При `200/CHDIR` проверьте каталоги из первого блока, при HTTP 403 — права на страницы. Все обращения выполняются из Ubuntu, а не с localhost macOS/Windows.
+
+<a id="extra-backup"></a>
+### Д5. Сделать и восстановить резервную копию по таймеру
+
+**Что увидим:** служба архивирует маленькую учебную папку. Таймер повторяет это каждую минуту. После изменения текста вернём его прежнюю версию из первого архива в отдельный каталог.
+
+#### Подготовить файлы и сделать первую копию вручную
+
+```bash
+cd ~/sre-systemd-lab
+sudo install -d -m 0755 /srv/lk3-extra-backup/source /srv/lk3-extra-backup/restore /opt/lk3-extra
+printf 'version 1\n' | sudo tee /srv/lk3-extra-backup/source/message.txt
+sudo chmod 0644 /srv/lk3-extra-backup/source/message.txt
+sudo install -m 0644 extra/05-backup/backup.py /opt/lk3-extra/backup.py
+cat extra/05-backup/lk3-extra-backup.service extra/05-backup/lk3-extra-backup.timer
+sudo install -m 0644 extra/05-backup/lk3-extra-backup.service extra/05-backup/lk3-extra-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start lk3-extra-backup.service
+sudo journalctl -b -u lk3-extra-backup.service --no-pager -n 10
+```
+
+Ожидаем `Created /var/lib/lk3-extra-backup/backup-<дата-и-время>.tar.gz`. `Type=oneshot` выполняет действие и завершается; `inactive` после успешной архивации нормально.
+
+Сохраним имя первой копии **в текущем терминале** и посмотрим содержимое:
+
+```bash
+LAB_FIRST_BACKUP=$(sudo find /var/lib/lk3-extra-backup/ -maxdepth 1 -type f -name 'backup-*.tar.gz' | sort | head -n 1)
+printf '%s\n' "$LAB_FIRST_BACKUP"
+sudo tar -tzf "$LAB_FIRST_BACKUP"
+```
+
+В архиве есть `source/` и `source/message.txt`. Имя содержит UTC-время с микросекундами, поэтому повторный запуск создаёт новый архив. `StateDirectory=lk3-extra-backup` поручает systemd создать каталог данных, доступный временно выделенному пользователю службы. Для просмотра архива используем `sudo`.
+
+#### Включить расписание и получить следующую копию
+
+```bash
+printf 'version 2\n' | sudo tee /srv/lk3-extra-backup/source/message.txt
+sudo systemctl enable --now lk3-extra-backup.timer
+systemctl list-timers --all lk3-extra-backup.timer --no-pager
+```
+
+Дождитесь времени `NEXT` из таблицы — обычно до минуты, с небольшим допустимым отклонением. Затем:
+
+```bash
+sudo journalctl -b -u lk3-extra-backup.service --no-pager -n 15
+sudo find /var/lib/lk3-extra-backup/ -maxdepth 1 -type f -name 'backup-*.tar.gz' | sort
+```
+
+Ожидаем ещё один архив и новую запись `Created`. Если пока видна одна копия, дождитесь `NEXT` и повторите проверку. `Persistent=true` позволяет догнать пропущенное календарное срабатывание после неактивности таймера; он не создаёт отдельный архив за каждую пропущенную минуту.
+
+#### Восстановить старый текст
+
+```bash
+sudo tar -xzf "$LAB_FIRST_BACKUP" -C /srv/lk3-extra-backup/restore
+cat /srv/lk3-extra-backup/source/message.txt
+cat /srv/lk3-extra-backup/restore/source/message.txt
+```
+
+Ожидаемый вывод:
+
+```text
+version 2
+version 1
+```
+
+Получилось восстановить прежнее содержимое, сохранив текущий файл. Для настоящего бэкапа также нужны хранение вне исходного диска, срок хранения и контроль ошибок; здесь мы наблюдаем запуск по расписанию и проверяем восстановление небольшого файла.
+
+#### Очистка и повтор
+
+```bash
+sudo systemctl disable --now lk3-extra-backup.timer
+sudo systemctl stop lk3-extra-backup.service
+sudo systemctl clean --what=state lk3-extra-backup.timer
+sudo systemctl clean --what=state lk3-extra-backup.service
+sudo rm /etc/systemd/system/lk3-extra-backup.timer /etc/systemd/system/lk3-extra-backup.service
+sudo systemctl daemon-reload
+sudo rm /opt/lk3-extra/backup.py
+sudo rm -r /srv/lk3-extra-backup
+unset LAB_FIRST_BACKUP
+```
+
+`clean --what=state` удаляет отметку `Persistent` у таймера и учебные архивы из `StateDirectory` службы. Сначала обязательно остановите timer и service, как в блоке выше.
+
+**Если не получилось:** при пустом `LAB_FIRST_BACKUP` проверьте журнал первой ручной архивации. Если открыли новый терминал, повторите блок присваивания переменной. При ошибке доступа к исходному файлу проверьте режим `0644` и права `0755` на каталоги. Для повторения с первой версии сначала выполните очистку.
+
+<a id="extra-path"></a>
+### Д6. Запустить обработчик при появлении файла
+
+**Что увидим:** активный `.path` ждёт конкретный файл. Как только файл появляется, systemd запускает готовый обработчик, который записывает результат и удаляет входной файл.
+
+#### Установить наблюдение
+
+```bash
+cd ~/sre-systemd-lab
+sudo install -d -m 0755 /var/lib/lk3-extra-inbox /opt/lk3-extra
+sudo install -m 0644 extra/06-path/process-inbox.py /opt/lk3-extra/process-inbox.py
+cat extra/06-path/lk3-extra-inbox.path extra/06-path/lk3-extra-inbox.service
+sudo install -m 0644 extra/06-path/lk3-extra-inbox.path extra/06-path/lk3-extra-inbox.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now lk3-extra-inbox.path
+systemctl status lk3-extra-inbox.path --no-pager
+```
+
+Ожидаем **active (waiting)**. В чистом опыте обработчик ещё не запускался. `PathExists=` наблюдает за `/var/lib/lk3-extra-inbox/request.txt`. По общей основе имени `.path` связан с `lk3-extra-inbox.service`.
+
+#### Передать первый файл
+
+```bash
+printf 'first message\n' | sudo tee /var/lib/lk3-extra-inbox/request.tmp
+sudo mv /var/lib/lk3-extra-inbox/request.tmp /var/lib/lk3-extra-inbox/request.txt
+sleep 1
+sudo cat /var/lib/lk3-extra-inbox/processed.txt
+sudo journalctl -b -u lk3-extra-inbox.service --no-pager -n 10
+```
+
+Ожидаем `Обработано: first message`. В журнале — запуск, сообщение `Processed request.txt -> processed.txt; input removed` и успешное завершение.
+
+Сначала пишем временный файл, затем переименовываем его в наблюдаемое имя в том же каталоге. Так обработчик получает уже записанный файл. `processed.txt` хранит только последний результат.
+
+#### Повторить с другими данными
+
+```bash
+printf 'second message\n' | sudo tee /var/lib/lk3-extra-inbox/request.tmp
+sudo mv /var/lib/lk3-extra-inbox/request.tmp /var/lib/lk3-extra-inbox/request.txt
+sleep 1
+sudo cat /var/lib/lk3-extra-inbox/processed.txt
+systemctl is-active lk3-extra-inbox.path
+systemctl is-active lk3-extra-inbox.service
+```
+
+Ожидаем `Обработано: second message`, затем `active` у `.path` и `inactive` у завершившегося oneshot-сервиса. Последний `is-active` вернёт ненулевой код — это нормально. Если машина занята и обработка ещё идёт, повторите проверки через пару секунд.
+
+**Почему обработчик удаляет входной файл:** условие `PathExists=` должно перестать выполняться. Иначе после завершения сервиса systemd снова увидит файл, повторит запуск и может дойти до ограничения частоты. Здесь один входной файл и один результат; новую запись отправляем после получения предыдущего результата. Это учебный пример запуска по событию файловой системы, не очередь сообщений.
+
+В этом коротком опыте обработчик работает от root с `ProtectSystem=strict`; systemd оставляет доступным для записи его `StateDirectory`. Для приложения с более широкими функциями отдельно подбирают пользователя и права.
+
+#### Очистка и повтор
+
+```bash
+sudo systemctl disable --now lk3-extra-inbox.path
+sudo systemctl stop lk3-extra-inbox.service
+sudo systemctl clean --what=state lk3-extra-inbox.service
+sudo rm /etc/systemd/system/lk3-extra-inbox.path /etc/systemd/system/lk3-extra-inbox.service
+sudo systemctl daemon-reload
+sudo rm /opt/lk3-extra/process-inbox.py
+```
+
+`clean --what=state` удаляет каталог этого опыта вместе с входными и выходными файлами.
+
+**Если не получилось:** проверьте `systemctl status lk3-extra-inbox.path --no-pager` и журнал сервиса. Убедитесь, что файл переименован именно в `request.txt`. Если изменяли пример и получили `start-limit-hit`, остановите `.path`, устраните причину по журналу, сбросьте состояния `sudo systemctl reset-failed lk3-extra-inbox.service lk3-extra-inbox.path`, затем снова запустите `.path`.
+
 <a id="troubleshooting"></a>
 ## Если что-то не работает
 
@@ -925,6 +1310,8 @@ sudo systemctl daemon-reload
 
 Команды основных опытов проверены 1 октября 2026 года на **Ubuntu 26.04.1 ARM64, systemd 259.5**, в отдельном контейнере с настоящим systemd в роли PID 1 и cgroups v2. Воспроизведены HTTP, конфликт порта, автоматический restart, остановка, cgroup OOM, файловая изоляция, socket activation, проверка копии fstab и календарный timer. Подробности и границы проверки — в [VALIDATION.md](VALIDATION.md).
 
+Дополнительные опыты **Д1–Д6 проверены 2 октября 2026 года** в таком же отдельном окружении: выполнены блоки команд из README, проверены результаты и очистка. Затем все шесть опытов повторены обычным пользователем с `sudo` после первого прохождения от root. Подтверждены тайм-аут, приватный `/tmp`, изменение CPUQuota, два экземпляра шаблона, восстановление из архива и запуск через `.path`.
+
 Установка VirtualBox на macOS/Windows, загрузка UEFI, SSH через NAT и восстановление снимка в рамках этой проверки не воспроизводились. Перед показом пройдите установку и короткую репетицию на конкретном компьютере. Контейнерная проверка не заменяет загрузку полноценной VM.
 
 Источники для подготовки и разбора отличий версий:
@@ -936,4 +1323,5 @@ sudo systemctl daemon-reload
 - [systemd.service](https://github.com/systemd/systemd/blob/v259.5/man/systemd.service.xml), [systemd.unit](https://github.com/systemd/systemd/blob/v259.5/man/systemd.unit.xml), [systemctl](https://github.com/systemd/systemd/blob/v259.5/man/systemctl.xml).
 - [systemd.resource-control](https://github.com/systemd/systemd/blob/v259.5/man/systemd.resource-control.xml), [systemd.exec](https://github.com/systemd/systemd/blob/v259.5/man/systemd.exec.xml).
 - [systemd.socket](https://github.com/systemd/systemd/blob/v259.5/man/systemd.socket.xml), [systemd.timer](https://github.com/systemd/systemd/blob/v259.5/man/systemd.timer.xml).
+- [systemd.path](https://github.com/systemd/systemd/blob/v259.5/man/systemd.path.xml), [systemd-run](https://github.com/systemd/systemd/blob/v259.5/man/systemd-run.xml), [nsenter](https://man7.org/linux/man-pages/man1/nsenter.1.html).
 - [findmnt](https://man7.org/linux/man-pages/man8/findmnt.8.html), [Python http.server](https://docs.python.org/3/library/http.server.html).

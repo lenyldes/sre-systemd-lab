@@ -1,0 +1,10 @@
+[Unit]
+Description=LK3 extra private temporary directory
+
+[Service]
+Type=exec
+DynamicUser=yes
+PrivateTmp=yes
+ExecStartPre=/bin/sh -c 'printf "hello from private tmp\n" > /tmp/lk3-extra-message.txt'
+ExecStart=/usr/bin/sleep 900
+RuntimeMaxSec=15min

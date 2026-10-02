@@ -1,0 +1,12 @@
+[Unit]
+Description=LK3 extra process a request file
+
+[Service]
+Type=oneshot
+StateDirectory=lk3-extra-inbox
+ExecStart=/usr/bin/python3 /opt/lk3-extra/process-inbox.py
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+TimeoutStartSec=10s

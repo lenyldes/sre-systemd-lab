@@ -1,0 +1,9 @@
+[Unit]
+Description=LK3 extra website on port %i
+
+[Service]
+Type=exec
+DynamicUser=yes
+WorkingDirectory=/srv/lk3-extra-web/%i
+ExecStart=/usr/bin/python3 -u -m http.server %i --bind 127.0.0.1
+NoNewPrivileges=yes
